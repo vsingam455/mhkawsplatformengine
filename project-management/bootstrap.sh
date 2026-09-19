@@ -30,8 +30,17 @@ if [ -z "$number" ]; then
   number=$(gh project create --owner "$OWNER" --title "$PROJECT_TITLE" --format json --jq .number)
   echo "project: created #$number"
 
-  gh project field-create "$number" --owner "$OWNER" --name "Stage" --data-type SINGLE_SELECT \
-    --single-select-options "Backlog,Ready,In Dev,In Review,In QA,Ready to Deploy,Done" >/dev/null
+  # Columns use the built-in Status field so GitHub's own workflows (closed -> Done) and the agents agree.
+  status_id=$(gh project field-list "$number" --owner "$OWNER" --format json --jq '.fields[] | select(.name=="Status").id')
+  # shellcheck disable=SC2016  # $f is a GraphQL variable, not a shell one
+  gh api graphql -f f="$status_id" -f query='mutation($f:ID!){updateProjectV2Field(input:{fieldId:$f,singleSelectOptions:[
+    {name:"Backlog",color:GRAY,description:"Not yet scheduled"},
+    {name:"Ready",color:BLUE,description:"Refined and ready to start"},
+    {name:"In Dev",color:YELLOW,description:"Being implemented by a person or the dev agent"},
+    {name:"In Review",color:ORANGE,description:"Pull request open"},
+    {name:"In QA",color:PURPLE,description:"Deployed to dev, being tested"},
+    {name:"Ready to Deploy",color:PINK,description:"Tested, waiting for promotion"},
+    {name:"Done",color:GREEN,description:"Released"}]}){clientMutationId}}' >/dev/null
   gh project field-create "$number" --owner "$OWNER" --name "Priority" --data-type SINGLE_SELECT \
     --single-select-options "P0,P1,P2,P3" >/dev/null
   gh project field-create "$number" --owner "$OWNER" --name "Story Points" --data-type NUMBER >/dev/null
