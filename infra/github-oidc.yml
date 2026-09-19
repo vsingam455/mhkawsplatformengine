@@ -7,7 +7,12 @@ Description: >
 Parameters:
   GitHubOrg:
     Type: String
-    Description: GitHub organization whose repositories may assume these roles.
+    Description: GitHub organization whose repositories may assume these roles (exact case).
+  GitHubOrgId:
+    Type: String
+    Description: >
+      Numeric ID of the organization (gh api orgs/<org> --jq .id). GitHub's immutable OIDC subjects
+      look like repo:<org>@<org-id>/<repo>@<repo-id>:..., so both forms are trusted.
   StackPrefix:
     Type: String
     Default: mhk
@@ -34,7 +39,10 @@ Resources:
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals: { "token.actions.githubusercontent.com:aud": sts.amazonaws.com }
-              StringLike: { "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubOrg}/*" }
+              StringLike:
+                "token.actions.githubusercontent.com:sub":
+                  - !Sub "repo:${GitHubOrg}@${GitHubOrgId}/*"
+                  - !Sub "repo:${GitHubOrg}/*"
       Policies:
         - PolicyName: invoke-bedrock-models
           PolicyDocument:
@@ -59,7 +67,10 @@ Resources:
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals: { "token.actions.githubusercontent.com:aud": sts.amazonaws.com }
-              StringLike: { "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubOrg}/*" }
+              StringLike:
+                "token.actions.githubusercontent.com:sub":
+                  - !Sub "repo:${GitHubOrg}@${GitHubOrgId}/*"
+                  - !Sub "repo:${GitHubOrg}/*"
       Policies:
         - PolicyName: read-deploy-diagnostics
           PolicyDocument:
@@ -92,7 +103,10 @@ Resources:
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals: { "token.actions.githubusercontent.com:aud": sts.amazonaws.com }
-              StringLike: { "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubOrg}/*:environment:dev" }
+              StringLike:
+                "token.actions.githubusercontent.com:sub":
+                  - !Sub "repo:${GitHubOrg}@${GitHubOrgId}/*:environment:dev"
+                  - !Sub "repo:${GitHubOrg}/*:environment:dev"
       Policies:
         - PolicyName: deploy-dev-stacks
           PolicyDocument:
@@ -123,7 +137,10 @@ Resources:
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals: { "token.actions.githubusercontent.com:aud": sts.amazonaws.com }
-              StringLike: { "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubOrg}/*:environment:qa" }
+              StringLike:
+                "token.actions.githubusercontent.com:sub":
+                  - !Sub "repo:${GitHubOrg}@${GitHubOrgId}/*:environment:qa"
+                  - !Sub "repo:${GitHubOrg}/*:environment:qa"
       Policies:
         - PolicyName: deploy-qa-stacks
           PolicyDocument:
@@ -154,7 +171,10 @@ Resources:
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals: { "token.actions.githubusercontent.com:aud": sts.amazonaws.com }
-              StringLike: { "token.actions.githubusercontent.com:sub": !Sub "repo:${GitHubOrg}/*:environment:prod" }
+              StringLike:
+                "token.actions.githubusercontent.com:sub":
+                  - !Sub "repo:${GitHubOrg}@${GitHubOrgId}/*:environment:prod"
+                  - !Sub "repo:${GitHubOrg}/*:environment:prod"
       Policies:
         - PolicyName: deploy-prod-stacks
           PolicyDocument:

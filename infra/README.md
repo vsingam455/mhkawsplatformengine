@@ -22,7 +22,7 @@ Deploy (once per AWS account):
 aws cloudformation deploy \
   --stack-name mhk-github-oidc \
   --template-file infra/github-oidc.yml \
-  --parameter-overrides GitHubOrg=<org> \
+  --parameter-overrides GitHubOrg=<org> GitHubOrgId=<org-id> \
   --capabilities CAPABILITY_NAMED_IAM
 
 aws cloudformation describe-stacks --stack-name mhk-github-oidc --query "Stacks[0].Outputs"
