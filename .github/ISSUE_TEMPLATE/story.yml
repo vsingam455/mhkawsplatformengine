@@ -1,0 +1,35 @@
+name: Story
+description: A user-facing piece of work that fits in one sprint (attach it to an epic as a sub-issue)
+title: "[Story] "
+labels: ["type:story"]
+body:
+  - type: textarea
+    id: story
+    attributes:
+      label: User story
+      placeholder: As a <role>, I want <capability>, so that <benefit>.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Testable conditions. QA verifies the story against these.
+      placeholder: |
+        - [ ] Given ... when ... then ...
+    validations:
+      required: true
+  - type: textarea
+    id: technical
+    attributes:
+      label: Technical notes
+      description: Affected services, AWS resources, API contracts, data changes.
+  - type: dropdown
+    id: environments
+    attributes:
+      label: Target environments
+      multiple: true
+      options:
+        - dev
+        - qa
+        - prod

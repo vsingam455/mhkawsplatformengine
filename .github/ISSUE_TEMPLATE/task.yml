@@ -1,0 +1,19 @@
+name: Task
+description: Technical or operational work that is not user-facing (infra, chores, spikes)
+title: "[Task] "
+labels: ["type:task"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What needs to be done
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Definition of done
+      placeholder: |
+        - [ ] ...
+    validations:
+      required: true
