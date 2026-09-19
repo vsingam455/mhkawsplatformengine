@@ -17,7 +17,7 @@ shows progress across its stories.
 
 ## Board
 
-The project board tracks every issue through the `Stage` field:
+The project board tracks every issue through the `Status` field:
 
 `Backlog → Ready → In Dev → In Review → In QA → Ready to Deploy → Done`
 
@@ -32,6 +32,6 @@ account that administers the repo.
 Three things are done once in the project UI because the CLI does not cover them:
 
 1. Add a `Sprint` field of type **Iteration** (Settings → Custom fields).
-2. Create the views: a **Board** grouped by `Stage`, a **Table** grouped by parent issue
+2. Create the views: a **Board** with `Status` as the column field, a **Table** grouped by parent issue
    (the epic view), and a **Current sprint** board filtered to `sprint:@current`.
 3. Under Workflows, enable **Auto-add to project** for this repo and **Item closed → Done**.
