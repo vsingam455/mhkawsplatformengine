@@ -8,7 +8,7 @@ set -euo pipefail
 
 OWNER="${OWNER:-vsingam455}"
 REPO="${REPO:-mhkawsplatformengine}"
-PROJECT_TITLE="${PROJECT_TITLE:-MHK AWS Platform}"
+PROJECT_TITLE="${PROJECT_TITLE:-MHK Projects}"
 
 label() { gh label create "$1" --repo "$OWNER/$REPO" --color "$2" --description "$3" --force >/dev/null; echo "label: $1"; }
 
