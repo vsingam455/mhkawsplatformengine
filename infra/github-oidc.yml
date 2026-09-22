@@ -1,0 +1,270 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  GitHub Actions access to AWS without stored keys. Creates the GitHub OIDC provider, one deploy
+  role per environment (usable only from the matching GitHub Environment), a Bedrock-only role for
+  the SDLC agents, and a read-only role for deploy diagnosis.
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Description: GitHub organization whose repositories may assume these roles (exact case).
+  GitHubOrgId:
+    Type: String
+    Description: >
+      Numeric ID of the organization (gh api orgs/<org> --jq .id). GitHub's immutable OIDC subjects
+      look like repo:<org>@<org-id>/<repo>@<repo-id>:..., so both forms are trusted.
+  StackPrefix:
+    Type: String
+    Default: mhk
+    Description: Deploy roles may only manage CloudFormation stacks named <prefix>-<env>-*.
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  # Agents: may call Bedrock models and nothing else. Any repo in the org, any ref.
+  AgentBedrockRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: gha-agent-bedrock
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Federated: !Ref GitHubOidcProvider }
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals: { "token.actions.githubusercontent.com:aud": sts.amazonaws.com }
+              StringLike:
+                "token.actions.githubusercontent.com:sub":
+                  - !Sub "repo:${GitHubOrg}@${GitHubOrgId}/*"
+                  - !Sub "repo:${GitHubOrg}/*"
+      Policies:
+        - PolicyName: invoke-bedrock-models
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+                Resource:
+                  - arn:aws:bedrock:*::foundation-model/anthropic.*
+                  - !Sub arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*anthropic.*
+
+  # DevOps agent: read logs and stack events to diagnose a failed deploy. Cannot change anything.
+  DevOpsReadOnlyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: gha-devops-readonly
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Federated: !Ref GitHubOidcProvider }
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals: { "token.actions.githubusercontent.com:aud": sts.amazonaws.com }
+              StringLike:
+                "token.actions.githubusercontent.com:sub":
+                  - !Sub "repo:${GitHubOrg}@${GitHubOrgId}/*"
+                  - !Sub "repo:${GitHubOrg}/*"
+      Policies:
+        - PolicyName: read-deploy-diagnostics
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cloudformation:Describe*
+                  - cloudformation:List*
+                  - cloudformation:GetTemplate
+                  - logs:Describe*
+                  - logs:Get*
+                  - logs:FilterLogEvents
+                  - logs:StartQuery
+                  - logs:GetQueryResults
+                Resource: "*"
+
+  # Deploy roles: usable only from the matching GitHub Environment (so environment approvals gate
+  # them), and only for CloudFormation/SAM stacks named <prefix>-<env>-*. Resources inside a stack
+  # are created by CloudFormation with the execution role below, not by the pipeline directly.
+  DeployRoleDev:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: gha-deploy-dev
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Federated: !Ref GitHubOidcProvider }
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals: { "token.actions.githubusercontent.com:aud": sts.amazonaws.com }
+              StringLike:
+                "token.actions.githubusercontent.com:sub":
+                  - !Sub "repo:${GitHubOrg}@${GitHubOrgId}/*:environment:dev"
+                  - !Sub "repo:${GitHubOrg}/*:environment:dev"
+      Policies:
+        - PolicyName: deploy-dev-stacks
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: cloudformation:*
+                Resource: !Sub arn:aws:cloudformation:*:${AWS::AccountId}:stack/${StackPrefix}-dev-*/*
+              - Effect: Allow
+                Action: [cloudformation:ValidateTemplate, cloudformation:CreateChangeSet]
+                Resource: ["*", "arn:aws:cloudformation:*:aws:transform/Serverless-2016-10-31"]
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:ListBucket, s3:GetBucketLocation]
+                Resource: [!GetAtt ArtifactBucket.Arn, !Sub "${ArtifactBucket.Arn}/dev/*"]
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CloudFormationExecutionRole.Arn
+
+  DeployRoleQa:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: gha-deploy-qa
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Federated: !Ref GitHubOidcProvider }
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals: { "token.actions.githubusercontent.com:aud": sts.amazonaws.com }
+              StringLike:
+                "token.actions.githubusercontent.com:sub":
+                  - !Sub "repo:${GitHubOrg}@${GitHubOrgId}/*:environment:qa"
+                  - !Sub "repo:${GitHubOrg}/*:environment:qa"
+      Policies:
+        - PolicyName: deploy-qa-stacks
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: cloudformation:*
+                Resource: !Sub arn:aws:cloudformation:*:${AWS::AccountId}:stack/${StackPrefix}-qa-*/*
+              - Effect: Allow
+                Action: [cloudformation:ValidateTemplate, cloudformation:CreateChangeSet]
+                Resource: ["*", "arn:aws:cloudformation:*:aws:transform/Serverless-2016-10-31"]
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:ListBucket, s3:GetBucketLocation]
+                Resource: [!GetAtt ArtifactBucket.Arn, !Sub "${ArtifactBucket.Arn}/qa/*"]
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CloudFormationExecutionRole.Arn
+
+  DeployRoleProd:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: gha-deploy-prod
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Federated: !Ref GitHubOidcProvider }
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals: { "token.actions.githubusercontent.com:aud": sts.amazonaws.com }
+              StringLike:
+                "token.actions.githubusercontent.com:sub":
+                  - !Sub "repo:${GitHubOrg}@${GitHubOrgId}/*:environment:prod"
+                  - !Sub "repo:${GitHubOrg}/*:environment:prod"
+      Policies:
+        - PolicyName: deploy-prod-stacks
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: cloudformation:*
+                Resource: !Sub arn:aws:cloudformation:*:${AWS::AccountId}:stack/${StackPrefix}-prod-*/*
+              - Effect: Allow
+                Action: [cloudformation:ValidateTemplate, cloudformation:CreateChangeSet]
+                Resource: ["*", "arn:aws:cloudformation:*:aws:transform/Serverless-2016-10-31"]
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:ListBucket, s3:GetBucketLocation]
+                Resource: [!GetAtt ArtifactBucket.Arn, !Sub "${ArtifactBucket.Arn}/prod/*"]
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CloudFormationExecutionRole.Arn
+
+  # What CloudFormation itself may create inside application stacks (serverless pilot scope).
+  # Widen deliberately, per service, as products need more.
+  CloudFormationExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${StackPrefix}-cfn-exec
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: cloudformation.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: serverless-app-resources
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [lambda:*, apigateway:*, logs:*, dynamodb:*, sqs:*, events:*, cloudwatch:*]
+                Resource: "*"
+              - Effect: Allow
+                Action: [s3:GetObject]
+                Resource: !Sub ${ArtifactBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:PassRole
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                Resource: !Sub arn:aws:iam::${AWS::AccountId}:role/${StackPrefix}-*
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub ${StackPrefix}-deploy-artifacts-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      VersioningConfiguration: { Status: Enabled }
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-old-artifacts
+            Status: Enabled
+            NoncurrentVersionExpiration: { NoncurrentDays: 30 }
+
+Outputs:
+  AgentBedrockRoleArn:
+    Description: Set as the org variable AWS_BEDROCK_ROLE_ARN.
+    Value: !GetAtt AgentBedrockRole.Arn
+  DevOpsReadOnlyRoleArn:
+    Value: !GetAtt DevOpsReadOnlyRole.Arn
+  DeployRoleDevArn:
+    Value: !GetAtt DeployRoleDev.Arn
+  DeployRoleQaArn:
+    Value: !GetAtt DeployRoleQa.Arn
+  DeployRoleProdArn:
+    Value: !GetAtt DeployRoleProd.Arn
+  CloudFormationExecutionRoleArn:
+    Value: !GetAtt CloudFormationExecutionRole.Arn
+  ArtifactBucketName:
+    Value: !Ref ArtifactBucket
